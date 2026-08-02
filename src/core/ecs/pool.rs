@@ -17,6 +17,10 @@ impl<T> ComponentPool<T> {
         }
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = (&Entity, &T)> {
+        self.dense.iter().zip(self.data.iter())
+    }
+
     pub fn insert(&mut self, entity: Entity, component: T) {
         let idx = entity.index as usize;
         if idx >= self.sparse.len() {

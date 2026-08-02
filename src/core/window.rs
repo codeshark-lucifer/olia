@@ -1,4 +1,4 @@
-use sdl3::event::Event;
+use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::Keycode;
 use sdl3::video::GLProfile;
 
@@ -14,7 +14,13 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(title: &str, width: u32, height: u32) -> (Self, sdl3::EventPump) {
+    pub fn new(
+        title: &str,
+        width: u32,
+        height: u32,
+        resizable: bool,
+        fullscreen: bool,
+    ) -> (Self, sdl3::EventPump) {
         let sdl = sdl3::init().unwrap();
         let video = sdl.video().unwrap();
 
@@ -23,12 +29,19 @@ impl Window {
         gl_attr.set_context_profile(GLProfile::Core);
         gl_attr.set_context_version(3, 3);
 
-        let window = video
-            .window(title, width, height)
-            .position_centered()
-            .opengl()
-            .build()
-            .unwrap();
+        // Configure Window Builder
+        let mut builder = video.window(title, width, height);
+        builder.position_centered().opengl();
+
+        if resizable {
+            builder.resizable();
+        }
+
+        if fullscreen {
+            builder.fullscreen();
+        }
+
+        let window = builder.build().unwrap();
 
         let gl_context = window.gl_create_context().unwrap();
         window.gl_make_current(&gl_context).unwrap();
@@ -55,7 +68,6 @@ impl Window {
         (win, event_pump)
     }
 
-    // 2. Uses &mut self (to modify running) and &mut sdl3::EventPump (borrowing events)
     pub fn process_events(&mut self, events: &mut sdl3::EventPump) -> bool {
         for event in events.poll_iter() {
             match event {
@@ -64,6 +76,18 @@ impl Window {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => self.running = false,
+
+                // Handle window resizing and update OpenGL Viewport
+                Event::Window {
+                    win_event: WindowEvent::Resized(w, h),
+                    ..
+                } => {
+                    self.width = w as u32;
+                    self.height = h as u32;
+                    unsafe {
+                        gl::Viewport(0, 0, w, h);
+                    }
+                }
                 _ => {}
             }
         }
@@ -71,10 +95,10 @@ impl Window {
         self.running
     }
 
-    pub fn clear(&self, r:f32, g:f32, b:f32, a: f32) {
+    pub fn clear(&self, r: f32, g: f32, b: f32, a: f32) {
         unsafe {
-            gl::ClearColor(r, g,b, a);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
+            gl::ClearColor(r, g, b, a);
+            gl::Clear(gl::COLOR_BUFFER_BIT | gl::DEPTH_BUFFER_BIT);
         }
     }
 

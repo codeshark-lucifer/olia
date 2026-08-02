@@ -163,6 +163,7 @@ impl Mat3 {
 // ============================================================================
 // MAT4 (Column-Major 4x4 Matrix - OpenGL / Vulkan Standard)
 // ============================================================================
+#[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Mat4 {
     pub data: [f32; 16], // Column-major order

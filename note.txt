@@ -1,0 +1,1110 @@
+============================================================
+FILE: D:\Program Education\rust\olia\src\main.rs
+============================================================
+mod core;
+mod utils;
+
+use core::ecs::{Entity, World};
+use core::window::Window;
+
+use utils::mathf::{Mat4, Vec3};
+use components::transform::Transform;
+use components::transform::Camera;
+
+
+#[derive(Debug)]
+struct Velocity {
+    direction: Vec3,
+}
+
+
+fn create_entity(world: &mut World) -> Entity {
+    let entity = world.entities.spawn();
+
+    world.add_component(
+        entity,
+        Transform {
+            position: Vec3::ZERO,
+            rotation: Vec3::ZERO,
+            scale: Vec3::ONE,
+        },
+    );
+
+    entity
+}
+
+fn main() {
+    let (mut window, mut events) = Window::new("olia", 956, 540);
+    let mut world = World::new();
+
+    // Fixed: Pass `&mut world`
+    let ent_camera = create_entity(&mut world);
+    let ent_player = create_entity(&mut world);
+
+    // Attach Components
+    world.add_component(ent_camera, Camera::new(956, 540));
+    world.add_component(
+        ent_player,
+        Velocity {
+            direction: Vec3::new(0.01, 0.0, 0.0),
+        },
+    );
+
+    // Compute View, Projection, and MVP Matrix
+    // Fixed: Renamed `mvp` to `_mvp` to suppress unused variable warning
+    let _mvp = {
+        let cameras = world.pool::<Camera>().unwrap();
+        let transforms = world.pool::<Transform>().unwrap();
+
+        if let (Some(camera), Some(trans)) = (cameras.get(ent_camera), transforms.get(ent_camera))
+        {
+            let (view, proj) = camera.get_matrixes(trans);
+            let model = Mat4::translate(Vec3::new(1.0, 0.0, 0.0))
+                * Mat4::rotate(45.0f32.to_radians(), Vec3::UP);
+
+            proj * view * model
+        } else {
+            Mat4::identity()
+        }
+    };
+
+    println!("Initial MVP Matrix calculated successfully!");
+
+    // Main Game Loop
+    while window.process_events(&mut events) {
+        window.clear(0.1f32, 0.1f32, 0.1f32, 1.0f32);
+
+        // MOVEMENT SYSTEM
+        {
+            let mut velocities = world.pool_mut::<Velocity>();
+            let mut transforms = world.pool_mut::<Transform>();
+
+            for (entity, vel) in velocities.iter_mut() {
+                if let Some(trans) = transforms.get_mut(*entity) {
+                    trans.position += vel.direction;
+                }
+            }
+        }
+
+        window.swap_window();
+    }
+}
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\components\camera.rs
+============================================================
+use crate::utils::mathf::{Mat4, Vec3};
+
+#[derive(Debug, Clone, Copy)]
+pub struct View {
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct Camera {
+    pub view: View,
+    pub fov: f32,
+    pub near: f32,
+    pub far: f32,
+}
+
+impl Camera {
+    /// Creates a camera with default 45° FOV, 0.1 near plane, and 1000.0 far plane
+    pub fn new(width: i32, height: i32) -> Self {
+        Self {
+            view: View { width, height },
+            fov: 45.0,
+            near: 0.1,
+            far: 1000.0,
+        }
+    }
+
+    /// Creates a camera with custom settings
+    pub fn with_settings(width: i32, height: i32, fov: f32, near: f32, far: f32) -> Self {
+        Self {
+            view: View { width, height },
+            fov,
+            near,
+            far,
+        }
+    }
+
+    /// Call this whenever the window is resized
+    pub fn resize(&mut self, width: i32, height: i32) {
+        self.view.width = width;
+        self.view.height = height;
+    }
+
+    /// Calculates current aspect ratio
+    pub fn aspect_ratio(&self) -> f32 {
+        if self.view.height == 0 {
+            return 1.0;
+        }
+        self.view.width as f32 / self.view.height as f32
+    }
+
+    /// Computes the 4x4 Perspective Projection Matrix
+    pub fn get_projection_matrix(&self) -> Mat4 {
+        Mat4::perspective(self.fov.to_radians(), self.aspect_ratio(), self.near, self.far)
+    }
+
+    /// Computes the 4x4 View Matrix given camera position and forward direction
+    pub fn get_view_matrix(&self, position: Vec3, forward: Vec3) -> Mat4 {
+        let target = position + forward;
+        Mat4::look_at(position, target, Vec3::UP)
+    }
+
+    /// Returns both (View Matrix, Projection Matrix) given a position and forward vector
+    pub fn get_matrices(&self, position: Vec3, forward: Vec3) -> (Mat4, Mat4) {
+        let view = self.get_view_matrix(position, forward);
+        let proj = self.get_projection_matrix();
+        (view, proj)
+    }
+}
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\components\mod.rs
+============================================================
+pub mod transform;
+pub mod camera;
+
+#[allow(unused_imports)]
+pub use camera::*;
+#[allow(unused_imports)]
+pub use transform::*;
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\components\transform.rs
+============================================================
+use utils::mathf::{Mat4, Vec3};
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
+pub struct Transform {
+    pub position: Vec3,
+    pub rotation: Vec3, // Euler angles in radians (X, Y, Z)
+    pub scale: Vec3,
+}
+
+impl Transform {
+    /// Creates a Transform with custom position, rotation, and scale
+    pub fn new(position: Vec3, rotation: Vec3, scale: Vec3) -> Self {
+        Self {
+            position,
+            rotation,
+            scale,
+        }
+    }
+
+    /// Creates a default Transform (pos: 0, rot: 0, scale: 1)
+    pub fn identity() -> Self {
+        Self {
+            position: Vec3::ZERO,
+            rotation: Vec3::ZERO,
+            scale: Vec3::ONE,
+        }
+    }
+
+    /// Calculates the 4x4 Model Transformation Matrix (Translation * Rotation * Scale)
+    pub fn get_matrix(&self) -> Mat4 {
+        let translation = Mat4::translate(self.position);
+
+        // Individual rotations around X, Y, and Z axes
+        let rot_x = Mat4::rotate(self.rotation.x, Vec3::new(1.0, 0.0, 0.0));
+        let rot_y = Mat4::rotate(self.rotation.y, Vec3::new(0.0, 1.0, 0.0));
+        let rot_z = Mat4::rotate(self.rotation.z, Vec3::new(0.0, 0.0, 1.0));
+
+        // Combined Rotation Matrix (Z * Y * X)
+        let rotation = rot_z * rot_y * rot_x;
+
+        let scale = Mat4::scale(self.scale);
+
+        // Model Matrix = T * R * S
+        translation * rotation * scale
+    }
+}
+
+// Implement standard Rust Default trait
+impl Default for Transform {
+    fn default() -> Self {
+        Self::identity()
+    }
+}
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\core\mod.rs
+============================================================
+pub mod window; 
+pub mod ecs;
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\core\window.rs
+============================================================
+use sdl3::event::Event;
+use sdl3::keyboard::Keycode;
+use sdl3::video::GLProfile;
+
+#[allow(dead_code)]
+pub struct Window {
+    pub title: String,
+    pub width: u32,
+    pub height: u32,
+    running: bool,
+    _sdl: sdl3::Sdl,
+    window: sdl3::video::Window,
+    gl_context: sdl3::video::GLContext,
+}
+
+impl Window {
+    pub fn new(title: &str, width: u32, height: u32) -> (Self, sdl3::EventPump) {
+        let sdl = sdl3::init().unwrap();
+        let video = sdl.video().unwrap();
+
+        // OpenGL Configure
+        let gl_attr = video.gl_attr();
+        gl_attr.set_context_profile(GLProfile::Core);
+        gl_attr.set_context_version(3, 3);
+
+        let window = video
+            .window(title, width, height)
+            .position_centered()
+            .opengl()
+            .build()
+            .unwrap();
+
+        let gl_context = window.gl_create_context().unwrap();
+        window.gl_make_current(&gl_context).unwrap();
+
+        // Load OpenGL functions
+        gl::load_with(|name| {
+            video
+                .gl_get_proc_address(name)
+                .map_or(std::ptr::null(), |f| f as *const _)
+        });
+
+        let event_pump = sdl.event_pump().unwrap();
+
+        let win = Self {
+            title: title.to_string(),
+            width,
+            height,
+            running: true,
+            _sdl: sdl,
+            window,
+            gl_context,
+        };
+
+        (win, event_pump)
+    }
+
+    // 2. Uses &mut self (to modify running) and &mut sdl3::EventPump (borrowing events)
+    pub fn process_events(&mut self, events: &mut sdl3::EventPump) -> bool {
+        for event in events.poll_iter() {
+            match event {
+                Event::Quit { .. }
+                | Event::KeyDown {
+                    keycode: Some(Keycode::Escape),
+                    ..
+                } => self.running = false,
+                _ => {}
+            }
+        }
+
+        self.running
+    }
+
+    pub fn clear(&self, r:f32, g:f32, b:f32, a: f32) {
+        unsafe {
+            gl::ClearColor(r, g,b, a);
+            gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+    }
+
+    pub fn swap_window(&self) {
+        self.window.gl_swap_window();
+    }
+}
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\core\ecs\entity.rs
+============================================================
+use std::fmt;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Entity {
+    pub index: u32,
+    pub generation: u32,
+}
+
+impl fmt::Display for Entity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Entity({}, gen: {})", self.index, self.generation)
+    }
+}
+
+pub struct EntityAllocator {
+    generations: Vec<u32>,
+    free_list: Vec<u32>,
+}
+
+#[allow(dead_code)]
+impl EntityAllocator {
+    pub fn new() -> Self {
+        Self {
+            generations: Vec::new(),
+            free_list: Vec::new(),
+        }
+    }
+
+    pub fn spawn(&mut self) -> Entity {
+        if let Some(index) = self.free_list.pop() {
+            Entity {
+                index,
+                generation: self.generations[index as usize],
+            }
+        } else {
+            let index = self.generations.len() as u32;
+            self.generations.push(0);
+            Entity {
+                index,
+                generation: 0,
+            }
+        }
+    }
+
+    pub fn despawn(&mut self, entity: Entity) -> bool {
+        if !self.is_alive(entity) {
+            return false;
+        }
+        self.generations[entity.index as usize] += 1;
+        self.free_list.push(entity.index);
+        true
+    }
+
+    pub fn is_alive(&self, entity: Entity) -> bool {
+        self.generations
+            .get(entity.index as usize)
+            .map_or(false, |&g| g == entity.generation)
+    }
+}
+
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\core\ecs\mod.rs
+============================================================
+pub mod entity;
+pub mod pool;
+pub mod world;
+
+#[allow(unused_imports)]
+pub use entity::{Entity, EntityAllocator};
+#[allow(unused_imports)]
+pub use pool::ComponentPool;
+pub use world::World;
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\core\ecs\pool.rs
+============================================================
+use crate::core::ecs::entity::Entity;
+
+#[allow(dead_code)]
+pub struct ComponentPool<T> {
+    dense: Vec<Entity>,
+    data: Vec<T>,
+    sparse: Vec<Option<usize>>,
+}
+
+#[allow(dead_code)]
+impl<T> ComponentPool<T> {
+    pub fn new() -> Self {
+        Self {
+            dense: Vec::new(),
+            data: Vec::new(),
+            sparse: Vec::new(),
+        }
+    }
+
+    pub fn insert(&mut self, entity: Entity, component: T) {
+        let idx = entity.index as usize;
+        if idx >= self.sparse.len() {
+            self.sparse.resize(idx + 1, None);
+        }
+
+        if let Some(dense_idx) = self.sparse[idx] {
+            self.data[dense_idx] = component;
+        } else {
+            let dense_idx = self.data.len();
+            self.sparse[idx] = Some(dense_idx);
+            self.dense.push(entity);
+            self.data.push(component);
+        }
+    }
+
+    pub fn remove(&mut self, entity: Entity) -> Option<T> {
+        let idx = entity.index as usize;
+        let dense_idx = (*self.sparse.get(idx)?)?;
+
+        // Swap with last element for O(1) removal
+        let last_dense_idx = self.data.len() - 1;
+        self.data.swap(dense_idx, last_dense_idx);
+        self.dense.swap(dense_idx, last_dense_idx);
+
+        // Update sparse index of the swapped entity
+        let swapped_entity = self.dense[dense_idx];
+        self.sparse[swapped_entity.index as usize] = Some(dense_idx);
+
+        // Clear sparse entry for removed entity
+        self.sparse[idx] = None;
+
+        self.dense.pop();
+        self.data.pop()
+    }
+
+    pub fn get(&self, entity: Entity) -> Option<&T> {
+        let idx = entity.index as usize;
+        let dense_idx = (*self.sparse.get(idx)?)?;
+        Some(&self.data[dense_idx])
+    }
+
+    pub fn get_mut(&mut self, entity: Entity) -> Option<&mut T> {
+        let idx = entity.index as usize;
+        let dense_idx = (*self.sparse.get(idx)?)?;
+        Some(&mut self.data[dense_idx])
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&Entity, &mut T)> {
+        self.dense.iter().zip(self.data.iter_mut())
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\core\ecs\world.rs
+============================================================
+use std::any::{Any, TypeId};
+use std::cell::{Ref, RefCell, RefMut, UnsafeCell};
+use std::collections::HashMap;
+
+use crate::core::ecs::entity::{Entity, EntityAllocator};
+use crate::core::ecs::pool::ComponentPool;
+
+pub struct World {
+    pub entities: EntityAllocator,
+    // UnsafeCell allows us to fetch/insert pools via &self
+    pools: UnsafeCell<HashMap<TypeId, Box<RefCell<Box<dyn Any>>>>>,
+}
+
+#[allow(dead_code)]
+impl World {
+    pub fn new() -> Self {
+        Self {
+            entities: EntityAllocator::new(),
+            pools: UnsafeCell::new(HashMap::new()),
+        }
+    }
+
+    /// Takes `&self` so you can borrow multiple pools simultaneously
+    pub fn pool_mut<T: 'static>(&self) -> RefMut<'_, ComponentPool<T>> {
+        let type_id = TypeId::of::<T>();
+
+        // SAFETY: Each pool is heap-allocated in a Box. Inserting new pools into
+        // the HashMap will not move existing Box addresses in memory.
+        let pools = unsafe { &mut *self.pools.get() };
+
+        let pool_box = pools
+            .entry(type_id)
+            .or_insert_with(|| Box::new(RefCell::new(Box::new(ComponentPool::<T>::new()))));
+
+        RefMut::map(pool_box.borrow_mut(), |boxed| {
+            boxed
+                .downcast_mut::<ComponentPool<T>>()
+                .expect("Failed to downcast component pool")
+        })
+    }
+
+    /// Read-only pool access
+    pub fn pool<T: 'static>(&self) -> Option<Ref<'_, ComponentPool<T>>> {
+        let type_id = TypeId::of::<T>();
+        let pools = unsafe { &*self.pools.get() };
+        let pool_box = pools.get(&type_id)?;
+
+        Some(Ref::map(pool_box.borrow(), |boxed| {
+            boxed
+                .downcast_ref::<ComponentPool<T>>()
+                .expect("Failed to downcast component pool")
+        }))
+    }
+
+    /// Add a component using &self
+    pub fn add_component<T: 'static>(&self, entity: Entity, component: T) {
+        self.pool_mut::<T>().insert(entity, component);
+    }
+
+    /// Remove a component using &self
+    pub fn remove_component<T: 'static>(&self, entity: Entity) -> Option<T> {
+        self.pool_mut::<T>().remove(entity)
+    }
+
+    /// Despawn an entity
+    pub fn despawn(&mut self, entity: Entity) -> bool {
+        self.entities.despawn(entity)
+    }
+}
+
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\graphics\mod.rs
+============================================================
+pub mod renderer;
+pub mod shader;
+
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\graphics\renderer.rs
+============================================================
+
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\graphics\shader.rs
+============================================================
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ffi::CString;
+use std::fs;
+use std::ptr;
+
+use crate::utils::mathf::{Mat4, Vec2, Vec3, Vec4};
+
+pub struct Shader {
+    pub id: u32,
+    // HashMap cache to store uniform name -> location mapping
+    uniform_locations: RefCell<HashMap<String, i32>>,
+}
+
+impl Shader {
+    /// Load shader program directly from hardcoded GLSL source strings
+    pub fn from_source(vertex_code: &str, fragment_code: &str) -> Result<Self, String> {
+        let vertex_shader = compile_shader(vertex_code, gl::VERTEX_SHADER)?;
+        let fragment_shader = compile_shader(fragment_code, gl::FRAGMENT_SHADER)?;
+
+        let id = unsafe { gl::CreateProgram() };
+        unsafe {
+            gl::AttachShader(id, vertex_shader);
+            gl::AttachShader(id, fragment_shader);
+            gl::LinkProgram(id);
+        }
+
+        // Check for linking errors
+        let mut success = gl::FALSE as i32;
+        unsafe {
+            gl::GetProgramiv(id, gl::LINK_STATUS, &mut success);
+        }
+
+        if success == (gl::FALSE as i32) {
+            let mut len = 0;
+            unsafe { gl::GetProgramiv(id, gl::INFO_LOG_LENGTH, &mut len); }
+            let mut buffer = vec![0u8; len as usize];
+            unsafe {
+                gl::GetProgramInfoLog(id, len, ptr::null_mut(), buffer.as_mut_ptr() as *mut i8);
+            }
+            let log = String::from_utf8_lossy(&buffer);
+            return Err(format!("Shader Program Link Error:\n{}", log));
+        }
+
+        // Clean up individual shaders once linked
+        unsafe {
+            gl::DeleteShader(vertex_shader);
+            gl::DeleteShader(fragment_shader);
+        }
+
+        Ok(Self {
+            id,
+            uniform_locations: RefCell::new(HashMap::new()),
+        })
+    }
+
+    /// Load shader program from GLSL files on disk
+    pub fn from_file(vertex_path: &str, fragment_path: &str) -> Result<Self, String> {
+        let vertex_code = fs::read_to_string(vertex_path)
+            .map_err(|e| format!("Failed to read vertex shader at '{vertex_path}': {e}"))?;
+
+        let fragment_code = fs::read_to_string(fragment_path)
+            .map_err(|e| format!("Failed to read fragment shader at '{fragment_path}': {e}"))?;
+
+        Self::from_source(&vertex_code, &fragment_code)
+    }
+
+    /// Activate this shader program
+    pub fn use_program(&self) {
+        unsafe {
+            gl::UseProgram(self.id);
+        }
+    }
+
+    /// Unbind the active shader program
+    pub fn unbind(&self) {
+        unsafe {
+            gl::UseProgram(0);
+        }
+    }
+
+    // ========================================================================
+    // UNIFORM LOCATION CACHING (HASHMAP)
+    // ========================================================================
+
+    fn get_uniform_location(&self, name: &str) -> Option<i32> {
+        let mut locations = self.uniform_locations.borrow_mut();
+
+        // 1. Return from HashMap cache if already queried
+        if let Some(&location) = locations.get(name) {
+            if location == -1 {
+                return None;
+            }
+            return Some(location);
+        }
+
+        // 2. Query OpenGL driver if not in HashMap
+        let c_name = match CString::new(name) {
+            Ok(c_str) => c_str,
+            Err(_) => return None,
+        };
+
+        let location = unsafe { gl::GetUniformLocation(self.id, c_name.as_ptr()) };
+
+        // 3. Cache location in HashMap (even if -1, to avoid asking driver again for missing names)
+        locations.insert(name.to_string(), location);
+
+        if location == -1 {
+            None
+        } else {
+            Some(location)
+        }
+    }
+
+    // ========================================================================
+    // UNIFORM SETTERS
+    // ========================================================================
+
+    pub fn set_bool(&self, name: &str, value: bool) {
+        if let Some(loc) = self.get_uniform_location(name) {
+            unsafe { gl::Uniform1i(loc, value as i32); }
+        }
+    }
+
+    pub fn set_int(&self, name: &str, value: i32) {
+        if let Some(loc) = self.get_uniform_location(name) {
+            unsafe { gl::Uniform1i(loc, value); }
+        }
+    }
+
+    pub fn set_float(&self, name: &str, value: f32) {
+        if let Some(loc) = self.get_uniform_location(name) {
+            unsafe { gl::Uniform1f(loc, value); }
+        }
+    }
+
+    pub fn set_vec2(&self, name: &str, value: &Vec2) {
+        if let Some(loc) = self.get_uniform_location(name) {
+            unsafe { gl::Uniform2f(loc, value.x, value.y); }
+        }
+    }
+
+    pub fn set_vec3(&self, name: &str, value: &Vec3) {
+        if let Some(loc) = self.get_uniform_location(name) {
+            unsafe { gl::Uniform3f(loc, value.x, value.y, value.z); }
+        }
+    }
+
+    pub fn set_vec4(&self, name: &str, value: &Vec4) {
+        if let Some(loc) = self.get_uniform_location(name) {
+            unsafe { gl::Uniform4f(loc, value.x, value.y, value.z, value.w); }
+        }
+    }
+
+    pub fn set_mat4(&self, name: &str, mat: &Mat4) {
+        if let Some(loc) = self.get_uniform_location(name) {
+            unsafe {
+                gl::UniformMatrix4fv(loc, 1, gl::FALSE, mat.as_ptr());
+            }
+        }
+    }
+}
+
+// Automatically cleanup OpenGL Shader Program when dropped
+impl Drop for Shader {
+    fn drop(&mut self) {
+        unsafe {
+            gl::DeleteProgram(self.id);
+        }
+    }
+}
+
+// Private helper to compile individual shaders
+fn compile_shader(source: &str, shader_type: u32) -> Result<u32, String> {
+    let shader = unsafe { gl::CreateShader(shader_type) };
+    let c_str = CString::new(source).map_err(|e| e.to_string())?;
+
+    unsafe {
+        gl::ShaderSource(shader, 1, &c_str.as_ptr(), ptr::null());
+        gl::CompileShader(shader);
+    }
+
+    let mut success = gl::FALSE as i32;
+    unsafe {
+        gl::GetShaderiv(shader, gl::COMPILE_STATUS, &mut success);
+    }
+
+    if success == (gl::FALSE as i32) {
+        let mut len = 0;
+        unsafe { gl::GetShaderiv(shader, gl::INFO_LOG_LENGTH, &mut len); }
+        let mut buffer = vec![0u8; len as usize];
+        unsafe {
+            gl::GetShaderInfoLog(shader, len, ptr::null_mut(), buffer.as_mut_ptr() as *mut i8);
+        }
+        let log = String::from_utf8_lossy(&buffer);
+        let kind = if shader_type == gl::VERTEX_SHADER { "Vertex" } else { "Fragment" };
+        return Err(format!("{} Shader Compilation Error:\n{}", kind, log));
+    }
+
+    Ok(shader)
+}
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\utils\mathf.rs
+============================================================
+use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub, SubAssign};
+
+// ============================================================================
+// VEC2
+// ============================================================================
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Vec2 {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[allow(dead_code)]
+impl Vec2 {
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
+    pub const ONE: Self = Self { x: 1.0, y: 1.0 };
+
+    pub fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+
+    pub fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y
+    }
+
+    pub fn length(self) -> f32 {
+        self.dot(self).sqrt()
+    }
+
+    pub fn normalize(self) -> Self {
+        let len = self.length();
+        if len > 0.0 { self / len } else { Self::ZERO }
+    }
+}
+
+// Vec2 Operators
+impl Add for Vec2 { type Output = Self; fn add(self, rhs: Self) -> Self { Self::new(self.x + rhs.x, self.y + rhs.y) } }
+impl Sub for Vec2 { type Output = Self; fn sub(self, rhs: Self) -> Self { Self::new(self.x - rhs.x, self.y - rhs.y) } }
+impl Mul<f32> for Vec2 { type Output = Self; fn mul(self, rhs: f32) -> Self { Self::new(self.x * rhs, self.y * rhs) } }
+impl Div<f32> for Vec2 { type Output = Self; fn div(self, rhs: f32) -> Self { Self::new(self.x / rhs, self.y / rhs) } }
+impl Neg for Vec2 { type Output = Self; fn neg(self) -> Self { Self::new(-self.x, -self.y) } }
+impl AddAssign for Vec2 { fn add_assign(&mut self, rhs: Self) { self.x += rhs.x; self.y += rhs.y; } }
+impl SubAssign for Vec2 { fn sub_assign(&mut self, rhs: Self) { self.x -= rhs.x; self.y -= rhs.y; } }
+
+// ============================================================================
+// VEC3
+// ============================================================================
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Vec3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+#[allow(dead_code)]
+impl Vec3 {
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0, z: 0.0 };
+    pub const ONE: Self = Self { x: 1.0, y: 1.0, z: 1.0 };
+    pub const UP: Self = Self { x: 0.0, y: 1.0, z: 0.0 };
+    pub const DOWN: Self = Self { x: 0.0, y: -1.0, z: 0.0 };
+    pub const FORWARD: Self = Self { x: 0.0, y: 0.0, z: -1.0 };
+    pub const BACK: Self = Self { x: 0.0, y: 0.0, z: 1.0 };
+
+    pub fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    pub fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    pub fn cross(self, other: Self) -> Self {
+        Self {
+            x: self.y * other.z - self.z * other.y,
+            y: self.z * other.x - self.x * other.z,
+            z: self.x * other.y - self.y * other.x,
+        }
+    }
+
+    pub fn length(self) -> f32 {
+        self.dot(self).sqrt()
+    }
+
+    pub fn normalize(self) -> Self {
+        let len = self.length();
+        if len > 0.0 { self / len } else { Self::ZERO }
+    }
+}
+
+// Vec3 Operators
+impl Add for Vec3 { type Output = Self; fn add(self, rhs: Self) -> Self { Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z) } }
+impl Sub for Vec3 { type Output = Self; fn sub(self, rhs: Self) -> Self { Self::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z) } }
+impl Mul<f32> for Vec3 { type Output = Self; fn mul(self, rhs: f32) -> Self { Self::new(self.x * rhs, self.y * rhs, self.z * rhs) } }
+impl Div<f32> for Vec3 { type Output = Self; fn div(self, rhs: f32) -> Self { Self::new(self.x / rhs, self.y / rhs, self.z / rhs) } }
+impl Neg for Vec3 { type Output = Self; fn neg(self) -> Self { Self::new(-self.x, -self.y, -self.z) } }
+impl AddAssign for Vec3 { fn add_assign(&mut self, rhs: Self) { self.x += rhs.x; self.y += rhs.y; self.z += rhs.z; } }
+impl SubAssign for Vec3 { fn sub_assign(&mut self, rhs: Self) { self.x -= rhs.x; self.y -= rhs.y; self.z -= rhs.z; } }
+
+// ============================================================================
+// VEC4
+// ============================================================================
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Vec4 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub w: f32,
+}
+
+#[allow(dead_code)]
+impl Vec4 {
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0, z: 0.0, w: 0.0 };
+
+    pub fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
+        Self { x, y, z, w }
+    }
+
+    pub fn from_vec3(v: Vec3, w: f32) -> Self {
+        Self { x: v.x, y: v.y, z: v.z, w }
+    }
+
+    pub fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y + self.z * other.z + self.w * other.w
+    }
+}
+
+// Vec4 Operators
+impl Add for Vec4 { type Output = Self; fn add(self, rhs: Self) -> Self { Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z, self.w + rhs.w) } }
+impl Sub for Vec4 { type Output = Self; fn sub(self, rhs: Self) -> Self { Self::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z, self.w - rhs.w) } }
+impl Mul<f32> for Vec4 { type Output = Self; fn mul(self, rhs: f32) -> Self { Self::new(self.x * rhs, self.y * rhs, self.z * rhs, self.w * rhs) } }
+
+// ============================================================================
+// MAT2 & MAT3
+// ============================================================================
+
+#[allow(dead_code)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Mat2 { pub data: [f32; 4] }
+
+#[allow(dead_code)]
+impl Mat2 {
+    pub fn identity() -> Self {
+        Self { data: [1.0, 0.0, 0.0, 1.0] }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Mat3 { pub data: [f32; 9] }
+
+#[allow(dead_code)]
+impl Mat3 {
+    pub fn identity() -> Self {
+        Self {
+            data: [
+                1.0, 0.0, 0.0,
+                0.0, 1.0, 0.0,
+                0.0, 0.0, 1.0,
+            ],
+        }
+    }
+}
+
+// ============================================================================
+// MAT4 (Column-Major 4x4 Matrix - OpenGL / Vulkan Standard)
+// ============================================================================
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Mat4 {
+    pub data: [f32; 16], // Column-major order
+}
+
+#[allow(dead_code)]
+impl Mat4 {
+    pub fn identity() -> Self {
+        Self {
+            data: [
+                1.0, 0.0, 0.0, 0.0, // Col 0
+                0.0, 1.0, 0.0, 0.0, // Col 1
+                0.0, 0.0, 1.0, 0.0, // Col 2
+                0.0, 0.0, 0.0, 1.0, // Col 3
+            ],
+        }
+    }
+
+    /// Returns a raw pointer to pass directly to Shader Uniforms (`glUniformMatrix4fv`)
+    pub fn as_ptr(&self) -> *const f32 {
+        self.data.as_ptr()
+    }
+
+    /// Translation matrix
+    pub fn translate(v: Vec3) -> Self {
+        let mut m = Self::identity();
+        m.data[12] = v.x;
+        m.data[13] = v.y;
+        m.data[14] = v.z;
+        m
+    }
+
+    /// Scale matrix
+    pub fn scale(v: Vec3) -> Self {
+        let mut m = Self::identity();
+        m.data[0] = v.x;
+        m.data[5] = v.y;
+        m.data[10] = v.z;
+        m
+    }
+
+    /// Rotation matrix around axis (angle in radians)
+    pub fn rotate(angle_rad: f32, axis: Vec3) -> Self {
+        let mut m = Self::identity();
+        let axis = axis.normalize();
+        let c = angle_rad.cos();
+        let s = angle_rad.sin();
+        let omc = 1.0 - c;
+
+        m.data[0] = c + axis.x * axis.x * omc;
+        m.data[1] = axis.y * axis.x * omc + axis.z * s;
+        m.data[2] = axis.z * axis.x * omc - axis.y * s;
+
+        m.data[4] = axis.x * axis.y * omc - axis.z * s;
+        m.data[5] = c + axis.y * axis.y * omc;
+        m.data[6] = axis.z * axis.y * omc + axis.x * s;
+
+        m.data[8] = axis.x * axis.z * omc + axis.y * s;
+        m.data[9] = axis.y * axis.z * omc - axis.x * s;
+        m.data[10] = c + axis.z * axis.z * omc;
+
+        m
+    }
+
+    /// Perspective Projection Matrix (OpenGL standard)
+    pub fn perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) -> Self {
+        let f = 1.0 / (fovy_rad * 0.5).tan();
+        let mut m = Self { data: [0.0; 16] };
+
+        m.data[0] = f / aspect;
+        m.data[5] = f;
+        m.data[10] = (far + near) / (near - far);
+        m.data[11] = -1.0;
+        m.data[14] = (2.0 * far * near) / (near - far);
+
+        m
+    }
+
+    /// Orthographic Projection Matrix
+    pub fn ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Self {
+        let mut m = Self::identity();
+
+        m.data[0] = 2.0 / (right - left);
+        m.data[5] = 2.0 / (top - bottom);
+        m.data[10] = -2.0 / (far - near);
+
+        m.data[12] = -(right + left) / (right - left);
+        m.data[13] = -(top + bottom) / (top - bottom);
+        m.data[14] = -(far + near) / (far - near);
+
+        m
+    }
+
+    /// LookAt Camera Matrix
+    pub fn look_at(eye: Vec3, center: Vec3, up: Vec3) -> Self {
+        let f = (center - eye).normalize();
+        let s = f.cross(up).normalize();
+        let u = s.cross(f);
+
+        let mut m = Self::identity();
+
+        m.data[0] = s.x;
+        m.data[4] = s.y;
+        m.data[8] = s.z;
+
+        m.data[1] = u.x;
+        m.data[5] = u.y;
+        m.data[9] = u.z;
+
+        m.data[2] = -f.x;
+        m.data[6] = -f.y;
+        m.data[10] = -f.z;
+
+        m.data[12] = -s.dot(eye);
+        m.data[13] = -u.dot(eye);
+        m.data[14] = f.dot(eye);
+
+        m
+    }
+}
+
+#[allow(dead_code)]
+// Mat4 * Mat4 Multiplication
+impl Mul for Mat4 {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self {
+        let mut result = Self { data: [0.0; 16] };
+        for col in 0..4 {
+            for row in 0..4 {
+                let mut sum = 0.0;
+                for i in 0..4 {
+                    sum += self.data[i * 4 + row] * rhs.data[col * 4 + i];
+                }
+                result.data[col * 4 + row] = sum;
+            }
+        }
+        result
+    }
+}
+
+// Mat4 * Vec4 Multiplication
+impl Mul<Vec4> for Mat4 {
+    type Output = Vec4;
+
+    fn mul(self, v: Vec4) -> Vec4 {
+        Vec4 {
+            x: self.data[0] * v.x + self.data[4] * v.y + self.data[8] * v.z + self.data[12] * v.w,
+            y: self.data[1] * v.x + self.data[5] * v.y + self.data[9] * v.z + self.data[13] * v.w,
+            z: self.data[2] * v.x + self.data[6] * v.y + self.data[10] * v.z + self.data[14] * v.w,
+            w: self.data[3] * v.x + self.data[7] * v.y + self.data[11] * v.z + self.data[15] * v.w,
+        }
+    }
+}
+
+============================================================
+FILE: D:\Program Education\rust\olia\src\utils\mod.rs
+============================================================
+pub mod mathf;
+
+#[allow(unused_imports)]
+pub use mathf::*;
+
