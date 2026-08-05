@@ -1,0 +1,16 @@
+/target
+tmp.rs
+tmp.cpp
+tmpp.cpp
+assets/shaders/*.spv
+legacy
+
+compile.bat
+debug.bat
+note.txt
+
+# Added by cargo
+#
+# already existing elements were commented out
+
+#/target

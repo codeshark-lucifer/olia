@@ -1,0 +1,9 @@
+[package]
+name = "olia"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sdl3 = "0.18"
+ash = "0.38"
+gpu-allocator = "0.28"
