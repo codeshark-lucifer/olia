@@ -1,0 +1,100 @@
+core:
+- allocation / memory
+- logger
+- time
+- input
+
+renderer:
+- instance
+- surface
+- physical device selection
+- queue family identification
+- logical devicce creation
+- queue retrieval
+- swapchain
+
+- pipeline
+- texture
+- mesh
+- material
+- lighting
+- postprocess
+
+scene:
+- entity
+- transform
+- camera
+- level
+- scene manager
+
+animation:
+- skeleton
+- bone
+- animation clip
+- animator
+- ik
+
+physics:
+- collisions
+- rigidbody
+- character (controller)
+- ragdoll
+
+gameplay:
+- character
+- combat 
+- enemy
+- weapons
+- boss
+
+audio:
+- audio source
+- audio listener
+
+- scripting
+
+assets:
+- model loader
+- texture loader
+- animation loader
+
+tools:
+- level editor
+- assets viewer
+- animation viewer
+
+
+
+Renderer
+│
+├── Vulkan Instance
+│
+├── Debug Messenger
+│
+├── Surface
+│
+├── Device
+│   ├── Physical Device
+│   ├── Logical Device
+│   ├── Graphics Queue
+│   └── Present Queue
+│
+├── Swapchain
+│   ├── Images
+│   └── Image Views
+│
+├── Pipeline
+│   ├── Shader Modules
+│   ├── Pipeline Layout
+│   └── Graphics Pipeline
+│
+├── Framebuffer
+│   ├── Color Image
+│   └── Depth Image
+│
+├── Buffer
+│   ├── Vertex Buffer
+│   ├── Index Buffer
+│   └── Uniform Buffer
+│
+└── Vertex
